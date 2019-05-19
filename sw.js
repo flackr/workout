@@ -3,7 +3,7 @@
 // Most of the code in this file is copied or heavily derived from
 // https://developers.google.com/web/fundamentals/primers/service-workers/
 
-var CACHE_VERSION = 1; // update this value when updating the app
+var CACHE_VERSION = 2; // update this value when updating the app
 var CACHE_NAME = 'workout-cache-v' + CACHE_VERSION;
 var urlsToCache = [
   'index.html',

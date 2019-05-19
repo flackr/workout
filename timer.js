@@ -101,12 +101,14 @@ function tick() {
             return;
           }
         }
-        if (curSet.sets == 0 && nextPhase == 'break')
+        if (curSet.sets == 1 && nextPhase == 'break') {
           speak('Done');
-        else if (nextPhase == 'work')
+          reset();
+        } else if (nextPhase == 'work') {
           speak('go');
-        else if (nextPhase == 'break')
+        } else if (nextPhase == 'break') {
           speak('switch');
+        }
       } else if (curSet[settings[ind]] <= 3) {
         speak(curSet[settings[ind]]);
       } else if (curSet[settings[ind]] == Math.floor(params[settings[ind]] / 2)) {

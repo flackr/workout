@@ -25,6 +25,19 @@ if ('serviceWorker' in navigator) {
   });
 }
 
+// Set the name of the hidden property and the change event for visibility
+var hidden, visibilityChange;
+if (typeof document.hidden !== "undefined") {
+  hidden = "hidden";
+  visibilityChange = "visibilitychange";
+} else if (typeof document.msHidden !== "undefined") {
+  hidden = "msHidden";
+  visibilityChange = "msvisibilitychange";
+} else if (typeof document.webkitHidden !== "undefined") {
+  hidden = "webkitHidden";
+  visibilityChange = "webkitvisibilitychange";
+}
+
 let currentPage = undefined;
 const settings = ['leadin', 'work', 'break', 'sets'];
 
@@ -63,7 +76,12 @@ function parseTime(timeVal) {
 let curSet = {};
 
 function reset() {
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
   startTime = null;
+  lastTicks = 0;
   document.body.className = 'ready';
   for (let param of settings) {
     curSet[param] = params[param] = parseTime($(param).value);
@@ -73,13 +91,76 @@ function reset() {
 
 let startTime = null;
 let timer = null;
+let lastTicks = 0;
+// A time ordered list of events
+let events = [];
 
 function now() {
   return (new Date()).getTime();
 }
 
+// TODO: Use a generator to only generate the next event instead of the full
+// list up front.
+function generateEvents(startTime) {
+  let eventList = [];
+  let seconds = 0;
+  for (let i = 0; i < params.sets; i++) {
+
+    // Only lead in to the first set.
+    let startAt = (i == 0 ? 0 : 1);
+
+    // Only include the rest if it's not the last set.
+    let endAt = (i == params.sets - 1 ? 1 : 2);
+    for (let j = startAt; j <= endAt; j++) {
+      let curDur = params[settings[j]];
+
+      // Only generate halfway events for workout periods.
+      if (j == 1 && $('halfway').checked) {
+        eventList.push({
+          time: startTime + (seconds + curDur / 2) * 1000,
+          mandatory: false,
+          speak: 'halfway',
+        });
+      }
+
+      // Countdown
+      for (let k = 3; k >= 1; --k) {
+        eventList.push({
+          time: startTime + (seconds + curDur - k) * 1000,
+          mandatory: false,
+          speak: k,
+        });
+      }
+
+      // Transition
+      let eventText = '';
+      if (j == 0 || j == 2)
+        eventText = 'go';
+      else if (j == 1)
+        eventText = i == params.sets - 1 ? 'done' : 'switch';
+
+      if (eventText) {
+        eventList.push({
+          time: startTime + (seconds + curDur) * 1000,
+          mandatory: false,
+          speak: eventText,
+        });
+      }
+
+      seconds += curDur;
+    }
+  }
+  return eventList;
+}
+
 function play() {
-  startTime = now();
+  let resumeTime = now();
+  startTime = resumeTime - lastTicks * 1000;
+  events = generateEvents(startTime);
+  // Remove all events already passed.
+  let i = 0;
+  for (; i < events.length && events[i].time <= resumeTime; i++);
+  events.splice(0, i);
   document.body.className = 'playing';
   scheduleUpdate();
 }
@@ -89,11 +170,35 @@ function speak(text) {
 }
 
 function tick() {
+  timer = null;
   let curTime = now();
-  let ticks = startTime ? 1 : 0;
-  let ind = 0;
+  scheduleUpdate(curTime)
+
+  // Play all current audio events.
+  let i = 0;
+  for (;i<events.length; i++) {
+    if (events[i].time > curTime + 500)
+      break;
+
+    // Skip non-mandatory event if next event is due.
+    if (!events[i].mandatory &&
+        i + 1 < events.length &&
+        events[i + 1].time <= curTime + 500)
+      continue;
+
+    speak(events[i].speak);
+  }
+  events.splice(0, i);
+
+  // Update elements
+  let ticks = startTime ?
+      (Math.round((curTime - startTime) / 1000) - lastTicks) : 0;
+  lastTicks += ticks;
   let done = false;
+  // TODO: Calculate current state rather than ticking for each second
+  // passed.
   while (ticks-- > 0) {
+    let ind = 0;
     while (ind < settings.length && curSet[settings[ind]] <= 0)
       ind++;
     if (ind < settings.length) {
@@ -115,37 +220,47 @@ function tick() {
           }
         }
         if (curSet.sets == 1 && nextPhase == 'break') {
-          speak('Done');
           reset();
-        } else if (nextPhase == 'work') {
-          speak('go');
-        } else if (nextPhase == 'break') {
-          speak('switch');
         }
-      } else if (curSet[settings[ind]] <= 3) {
-        speak(curSet[settings[ind]]);
-      } else if (curSet[settings[ind]] == Math.floor(params[settings[ind]] / 2)) {
-        // Only announce halfway if during work phase.
-        if (ind == 1 && $('halfway').checked)
-          speak('Halfway');
       }
     }
   }
-  // TODO: Do # ticks
   for (let param of settings) {
     $(param + '-label').textContent = curSet[param];
   }
   scheduleUpdate();
 }
 
-function scheduleUpdate() {
+function handleVisibilityChange() {
+  // Visibility changes affect when we need to next fire a timer event.
+  if (!timer)
+    return;
+  clearTimeout(timer);
+  if (document[hidden]) {
+    scheduleUpdate();
+  } else {
+    // Immediately update the state if the document became visible.
+    tick();
+  }
+}
+document.addEventListener(visibilityChange, handleVisibilityChange, false);
+
+function scheduleUpdate(nowTime) {
   if (!startTime)
     return;
-  timer = setTimeout(tick, 1000 - ((now() - startTime) % 1000));
+  nowTime = nowTime || now();
+  if (document[hidden] && events.length > 0) {
+    timer = setTimeout(tick, events[0].time - nowTime);
+  } else {
+    timer = setTimeout(tick, 1000 - ((nowTime - startTime) % 1000));
+  }
 }
 
 function pause() {
-  clearTimeout(timer);
+  if (timer) {
+    clearTimeout(timer);
+    timer = null;
+  }
   startTime = null;
   document.body.className = 'paused';
 }
